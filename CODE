@@ -1,0 +1,219 @@
+/*
+  Home Automation System
+  ----------------------
+  Features:
+    - Manual mode (Bluetooth control)
+    - Automatic mode (Sensor control: DHT11, LDR, Ultrasonic)
+    - Controls gate (servo), fan (motor), and lighting (LED)
+  
+  Components:
+    - Arduino
+    - HC-05 Bluetooth Module
+    - DHT11 Temperature & Humidity Sensor
+    - LDR (Light Sensor)
+    - Ultrasonic Sensor (HC-SR04)
+    - Servo Motor
+    - DC Motor
+    - LCD with I2C Module
+  
+  Bluetooth Commands:
+    'O' - Open gate
+    'C' - Close gate
+    'L' - LED ON
+    'l' - LED OFF
+    'F' - Fan ON
+    'f' - Fan OFF
+    'S' - Send system status
+  
+  Author: Kshitij Dixit
+  Date: Aug 2025
+*/
+
+#include <DHT11.h>
+#include <LiquidCrystal_I2C.h>
+#include <Servo.h>
+#include <SoftwareSerial.h>
+
+// ------------------ Pin Definitions ------------------
+#define DHT_PIN 2
+#define MOTOR_PIN 5
+#define LDR_PIN A0
+#define LED_PIN 3
+#define TRIG_PIN 7
+#define ECHO_PIN 6
+#define SERVO_PIN 9
+#define BT_RX 12  // Arduino TX -> HC-05 RX
+#define BT_TX 11  // Arduino RX -> HC-05 TX
+
+// ------------------ Thresholds ------------------
+const int MIN_TEMP = 25;
+const int MAX_TEMP = 35;
+const int DISTANCE_THRESHOLD = 20; // cm
+
+// ------------------ Servo Positions ------------------
+const int GATE_CLOSED = 0;   // 0 degrees - closed
+const int GATE_OPEN = 90;    // 90 degrees - open
+
+// ------------------ Global Variables ------------------
+bool gateOpen = false;
+char mode;
+
+// ------------------ Objects ------------------
+DHT11 dht11(DHT_PIN);
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+Servo gateServo;
+SoftwareSerial bluetooth(BT_RX, BT_TX); // RX, TX
+
+// ------------------ Setup ------------------
+void setup() {
+  Serial.begin(9600);
+  bluetooth.begin(9600);
+
+  // Pin modes
+  pinMode(MOTOR_PIN, OUTPUT);
+  pinMode(LED_PIN, OUTPUT);
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+  pinMode(LDR_PIN, INPUT);
+
+  // Servo
+  gateServo.attach(SERVO_PIN);
+
+  // LCD
+  lcd.init();
+  lcd.backlight();
+  lcd.setCursor(0, 0);
+  lcd.print("Press0ForManual");
+  lcd.setCursor(0, 1);
+  lcd.print("Press1ForAuto");
+
+  // Wait for user mode selection or default to Auto after 5 sec
+  unsigned long startTime = millis();
+  while (!bluetooth.available() && millis() - startTime < 5000) {
+    delay(100);
+  }
+  if (bluetooth.available()) {
+    mode = bluetooth.read();
+  } else {
+    mode = '1'; // Default to Auto
+  }
+
+  // Show mode
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Mode: ");
+  lcd.print(mode == '0' ? "Manual" : "Auto");
+  delay(2000);
+}
+
+// ------------------ Main Loop ------------------
+void loop() {
+  if (mode == '0') {
+    processBluetooth();
+  } else if (mode == '1') {
+    readTemperatureAndHumidity();
+    controlLEDByLight();
+    controlGateWithUltrasonic();
+  }
+}
+
+// ------------------ Manual Mode ------------------
+void processBluetooth() {
+  if (bluetooth.available()) {
+    char command = bluetooth.read();
+    Serial.print("BT Command: ");
+    Serial.println(command);
+
+    switch (command) {
+      case 'O': openGate(); gateOpen = true; bluetooth.println("Gate opened"); break;
+      case 'C': closeGate(); gateOpen = false; bluetooth.println("Gate closed"); break;
+      case 'L': analogWrite(LED_PIN, 255); bluetooth.println("LED ON"); break;
+      case 'l': analogWrite(LED_PIN, 0); bluetooth.println("LED OFF"); break;
+      case 'F': analogWrite(MOTOR_PIN, 255); bluetooth.println("Fan ON"); break;
+      case 'f': analogWrite(MOTOR_PIN, 0); bluetooth.println("Fan OFF"); break;
+      case 'S': sendStatus(); break;
+    }
+  }
+}
+
+void sendStatus() {
+  int temperature = 0, humidity = 0;
+  int result = dht11.readTemperatureHumidity(temperature, humidity);
+
+  bluetooth.print("Temperature: "); bluetooth.print(temperature); bluetooth.println(" C");
+  bluetooth.print("Humidity: "); bluetooth.print(humidity); bluetooth.println(" %");
+  bluetooth.print("Gate: "); bluetooth.println(gateOpen ? "OPEN" : "CLOSED");
+
+  int lightValue = analogRead(LDR_PIN);
+  bluetooth.print("Light level: "); bluetooth.println(lightValue);
+}
+
+// ------------------ Automatic Mode ------------------
+void readTemperatureAndHumidity() {
+  int temperature = 0, humidity = 0;
+  int result = dht11.readTemperatureHumidity(temperature, humidity);
+
+  if (result == 0) {
+    lcd.setCursor(0, 0);
+    lcd.print("Temp: ");
+    lcd.print(temperature);
+    lcd.print((char)223);
+    lcd.print("C   ");
+    lcd.setCursor(0, 1);
+    lcd.print("Hum: ");
+    lcd.print(humidity);
+    lcd.print(" %   ");
+
+    controlFanByTemperature(temperature);
+  } else {
+    Serial.println(DHT11::getErrorString(result));
+  }
+}
+
+void controlFanByTemperature(int temp) {
+  if (temp < MIN_TEMP) {
+    analogWrite(MOTOR_PIN, 0);
+  } else if (temp >= MAX_TEMP) {
+    analogWrite(MOTOR_PIN, 255);
+  } else {
+    int targetSpeed = map(temp, MIN_TEMP, MAX_TEMP, 100, 255);
+    analogWrite(MOTOR_PIN, targetSpeed);
+  }
+}
+
+void controlLEDByLight() {
+  int lightValue = analogRead(LDR_PIN);
+  int pwmValue = map(lightValue, 0, 1023, 255, 0); // Inverted for darkness
+  analogWrite(LED_PIN, pwmValue);
+}
+
+void controlGateWithUltrasonic() {
+  long duration, distance;
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+
+  duration = pulseIn(ECHO_PIN, HIGH, 30000);
+  distance = duration * 0.034 / 2;
+
+  if (distance > 0 && distance <= DISTANCE_THRESHOLD) {
+    if (!gateOpen) { openGate(); gateOpen = true; }
+  } else {
+    if (gateOpen) { closeGate(); gateOpen = false; }
+  }
+}
+
+// ------------------ Gate Control ------------------
+void openGate() {
+  gateServo.write(GATE_OPEN);
+  lcd.setCursor(0, 1);
+  lcd.print("Gate: OPEN       ");
+}
+
+void closeGate() {
+  gateServo.write(GATE_CLOSED);
+  lcd.setCursor(0, 1);
+  lcd.print("Gate: CLOSED     ");
+}
