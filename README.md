@@ -9,11 +9,18 @@ appliances like lights, fan, and gate.
 Lighting using LDR - Smart Gate using ultrasonic sensor - Bluetooth
 control via mobile - Real-time LCD display
 
-## COMPONENTS - Arduino Uno - HC-05 Bluetooth Module - DHT11 Sensor - LDR -
+## COMPONENTS 
+- Arduino Uno - HC-05 Bluetooth Module - DHT11 Sensor - LDR -
 Ultrasonic Sensor (HC-SR04) - Servo Motor - DC Motor - LCD with I2C
 
-## BLUETOOTH COMMANDS O - Open Gate C - Close Gate L - LED ON l - LED OFF
-F - Fan ON f - Fan OFF S - Send Status
+## BLUETOOTH COMMANDS 
+O - Open Gate 
+C - Close Gate 
+L - LED ON 
+l - LED OFF
+F - Fan ON 
+f - Fan OFF 
+S - Send Status
 
 ## WORKING Manual Mode: - Control via Bluetooth commands
 
